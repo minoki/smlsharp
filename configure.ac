@@ -303,6 +303,9 @@ case "$target_cpu" in
     RUNTIME_DEFS="$RUNTIME_DEFS -DHOST_CPU_i386"
     LLCFLAGS="$LLCFLAGS -no-x86-call-frame-opt"
     ;;
+  aarch64|arm64)
+    AC_MSG_RESULT([yes])
+    ;;
   *)
     AC_MSG_RESULT([no])
     AC_MSG_ERROR([target_cpu $target_cpu is not supported.])

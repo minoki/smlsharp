@@ -5475,6 +5475,10 @@ $as_echo "yes" >&6; }
     RUNTIME_DEFS="$RUNTIME_DEFS -DHOST_CPU_i386"
     LLCFLAGS="$LLCFLAGS -no-x86-call-frame-opt"
     ;;
+  aarch64|arm64)
+    { $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+$as_echo "yes" >&6; }
+    ;;
   *)
     { $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
 $as_echo "no" >&6; }

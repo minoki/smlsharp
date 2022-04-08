@@ -247,8 +247,12 @@
  * for runtime primitive calls.
  */
 #ifdef __GNUC__
+# if defined(__x86_64__) || defined(__i386__)
 /* first three arguments are passed by machine registers */
-# define SML_PRIMITIVE __attribute__((regparm(3))) NOINLINE
+#  define SML_PRIMITIVE __attribute__((regparm(3))) NOINLINE
+# else
+#  define SML_PRIMITIVE NOINLINE
+# endif
 #else
 # error regparm(3) calling convention is not supported
 #endif
@@ -316,7 +320,13 @@ void sml_msg_init(void);
 	((uint64_t)d__ << 32) | a__; \
 })
 
-#define asm_pause() do { __asm__ volatile ("pause" ::: "memory"); } while(0)
+#if defined(__x86_64__) || defined(__i386__)
+# define asm_pause() do { __asm__ volatile ("pause" ::: "memory"); } while(0)
+#elif defined(__aarch64__)
+# define asm_pause() do { __asm__ volatile ("yield" ::: "memory"); } while(0)
+#else
+# error unsupported architecture
+#endif
 
 /*
  * malloc with error checking
@@ -422,12 +432,49 @@ SML_PRIMITIVE void *sml_unsave_exn(void *);
  * stack frame address
  * FIXME: platform dependent
  */
-#define CALLER_FRAME_END_ADDRESS() \
+#if defined(__x86_64__) || defined(__i386__)
+/*
+ * stack (upward is larger address, grows downward)
+ * ^
+ * | +-+
+ * | | | return address
+ * | +-+ <-- rsp on entry -- frame_begin
+ * | | | saved rbp
+ * | +-+ <-- rbp / __builtin_frame_address(0)
+ * | | |
+ * | : : local variables
+ * | | |
+ * | +-+ <-- rsp -- frame_end
+ */
+# define CALLER_FRAME_END_ADDRESS() \
 	((void**)__builtin_frame_address(0) + 2)
-#define FRAME_CODE_ADDRESS(frame_end) \
+# define FRAME_CODE_ADDRESS(frame_end) \
 	(*((void**)(frame_end) - 1))
-#define NEXT_FRAME(frame_begin) \
+# define NEXT_FRAME(frame_begin) \
 	((void**)frame_begin + 1)
+#elif defined(__aarch64__)
+/*
+ * stack (upward is larger address, grows downward)
+ * ^
+ * | +-+ <-- sp on entry -- frame_begin
+ * | | | saved x30 (return address)
+ * | +-+
+ * | | | saved x29 (link register)
+ * | +-+ <-- x29 / __builtin_frame_address(0)
+ * | | |
+ * | : : local variables
+ * | | |
+ * | +-+ <-- sp -- frame_end
+ */
+# define CALLER_FRAME_END_ADDRESS() \
+	((void**)__builtin_frame_address(0) + 2)
+# define FRAME_CODE_ADDRESS(frame_end) \
+	(*((void**)(frame_end) - 1))
+# define NEXT_FRAME(frame_begin) \
+	((void**)frame_begin)
+#else
+# error unsupported architecture
+#endif
 
 /*
  * SML# heap object management
