@@ -413,6 +413,10 @@ AC_CHECK_LIB(socket, socket)
 AC_CHECK_LIB(dl, dlopen)
 AC_CHECK_LIB(rt, clock_gettime)
 
+# TODO: Make libffi dependency optional
+# TODO: Check if FFI_CLOSURES is defined
+AC_CHECK_LIB(ffi, ffi_prep_cif)
+
 dnl ## cygwin has dlopen in libcygwin.dll.
 dnl if test "x$ac_cv_lib_dl_dlopen" = "xno"; then
 dnl   case "$target_os" in

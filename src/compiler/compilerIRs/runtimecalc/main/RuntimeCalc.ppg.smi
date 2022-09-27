@@ -77,6 +77,7 @@ struct
         codeExp : ncexp,
         closureEnvExp : ncexp,
         instTyvars : Types.btvEnv,
+        typeSpec : DataLabel.id * Word32.word,
         resultTy : ty,
         loc : loc
       }

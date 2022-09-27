@@ -6,6 +6,7 @@ _require local "../../../extensions/format-utils/main/SmlppgUtil.ppg.smi"
 (* _require local "../../../data/builtin/main/BuiltinPrimitive.ppg.smi" *)
 
 _require "../../../../smlformat-lib.smi"
+_require "../../../../basis.smi"
 _require "../../../data/symbols/main/Loc.smi"
 _require local "../../../libs/util/main/TermFormat.smi"
 _require "../../../compilerIRs/runtimecalc/main/RuntimeCalc.ppg.smi"
@@ -82,6 +83,7 @@ struct
         instTyvars : Types.btvEnv,
         codeExp : anvalue,
         closureEnvExp : anvalue,
+        typeSpec : DataLabel.id * Word32.word,
         nextExp : anexp,
         loc : loc
       }

@@ -17,6 +17,7 @@ struct
   structure C = ClosureCalc
   structure T = Types
   structure P = BuiltinPrimitive
+  structure RT = RuntimeTypes
 
   fun newVar ty =
       {id = VarID.generate (), path = [], ty = ty} : C.varInfo
@@ -88,7 +89,7 @@ struct
           C.CCFOREIGNAPPLY {funExp, attributes, argExpList, resultTy, loc} =>
           fvExpList bv (funExp :: argExpList)
         | C.CCEXPORTCALLBACK {codeExp, closureEnvExp, instTyvars, resultTy,
-                              loc} =>
+                              typeSpec, loc} =>
           fvExpList bv [codeExp, closureEnvExp]
         | C.CCCONST {const, ty, loc} => emptySet
         | C.CCINTINF {srcLabel, loc} => emptySet
@@ -185,12 +186,13 @@ struct
            argExpList = map (substExp subst) argExpList,
            resultTy = resultTy,
            loc = loc}
-      | C.CCEXPORTCALLBACK {codeExp, closureEnvExp, instTyvars, resultTy,
-                            loc} =>
+      | C.CCEXPORTCALLBACK {codeExp, closureEnvExp, instTyvars, typeSpec,
+                            resultTy, loc} =>
         C.CCEXPORTCALLBACK
           {codeExp = substExp subst codeExp,
            closureEnvExp = substExp subst closureEnvExp,
            instTyvars = instTyvars,
+           typeSpec = typeSpec,
            resultTy = resultTy,
            loc = loc}
       | C.CCCONST {const, ty, loc} => ccexp
@@ -1259,7 +1261,7 @@ struct
           val (top1, bodyExp) = compileFuncBody env bodyExp loc
           val fv = freeVarsFn (argVarList, bodyExp)
           val (closureEnv, subst) = computeClosure accum (#styEnv env) (fv, loc)
-          val tyvarKindEnv = SingletonTyEnv2.btvEnv (#styEnv env)
+          val tyvarKindEnv = SingletonTyEnv2.btvEnv (#styEnv env) : T.btvEnv
           val id = CallbackEntryLabel.generate (#path env)
           val func = {id = id,
                       tyvarKindEnv = tyvarKindEnv,
@@ -1287,22 +1289,71 @@ struct
                          ty = callbackEntryTy,
                          loc = loc}
         in
-          (top1 @ [DEC (C.CTCALLBACKFUNCTION func)],
-           VALUE,
-           case closureEnv of
-             NONE =>
-             (* no need to make a C closure *)
+          case closureEnv of
+            NONE =>
+            (* no need to make a C closure *)
+            (top1 @ [DEC (C.CTCALLBACKFUNCTION func)],
+             VALUE,
              C.CCCAST {exp = codeExp,
                        expTy = callbackEntryTy,
                        targetTy = funPtrTy,
                        cast = BuiltinPrimitive.BitCast,
-                       loc = loc}
-           | SOME (_, closureEnvExp) =>
-             C.CCEXPORTCALLBACK {codeExp = codeExp,
-                                 closureEnvExp = closureEnvExp,
-                                 instTyvars = tyvarKindEnv,
-                                 resultTy = funPtrTy,
-                                 loc = loc})
+                       loc = loc})
+          | SOME (_, closureEnvExp) =>
+            let
+              val pointerSize = RT.getSize (#size RT.recordTy)
+              fun tyToChar ty = (case TypeLayout2.propertyOf tyvarKindEnv ty of
+                                   NONE => #"v" (* is this ok? *)
+                                 | SOME rty => rtyToChar rty)
+              and tyToCharOpt NONE = #"v"
+                | tyToCharOpt (SOME ty) = tyToChar ty
+              and rtyToChar (rty as {tag = RT.TAG tag, size = RT.SIZE size, rep}) =
+                  (case (tag, RT.getSize size, rep) of
+                     (RT.UNBOXED, 1, RT.INT RT.SIGNED) => #"B"
+                   | (RT.UNBOXED, 1, RT.INT RT.UNSIGNED) => #"b"
+                   | (RT.UNBOXED, 2, RT.INT RT.SIGNED) => #"S"
+                   | (RT.UNBOXED, 2, RT.INT RT.UNSIGNED) => #"s"
+                   | (RT.UNBOXED, 4, RT.INT RT.SIGNED) => #"W"
+                   | (RT.UNBOXED, 4, RT.INT RT.UNSIGNED) => #"w"
+                   | (RT.UNBOXED, 8, RT.INT RT.SIGNED) => #"L"
+                   | (RT.UNBOXED, 8, RT.INT RT.UNSIGNED) => #"l"
+                   | (_, _, RT.INT _) => raise Bug.Bug "tyToChar: INT"
+                   | (RT.UNBOXED, 4, RT.FLOAT) => #"f"
+                   | (RT.UNBOXED, 8, RT.FLOAT) => #"d"
+                   | (_, _, RT.FLOAT) => raise Bug.Bug "tyToChar: FLOAT"
+                   | (_, size, RT.PTR) =>
+                     if size = pointerSize then #"p"
+                     else raise Bug.Bug "tyToChar: PTR"
+                   | (_, size, RT.CPTR) =>
+                     if size = pointerSize then #"p"
+                     else raise Bug.Bug "tyToChar: CPTR"
+                   | (_, size, RT.CODEPTR _) =>
+                     if tag = RT.UNBOXED andalso size = pointerSize then #"p"
+                     else raise Bug.Bug "tyToChar: CODEPTR"
+                   | (RT.BOXED, size, RT.BINARY) =>
+                     if size = pointerSize then #"p"
+                     else raise Bug.Bug "tyToChar: BINARY"
+                   | (RT.UNBOXED, 1, RT.BINARY) => #"b"
+                   | (RT.UNBOXED, 2, RT.BINARY) => #"s"
+                   | (RT.UNBOXED, 4, RT.BINARY) => #"w"
+                   | (RT.UNBOXED, 8, RT.BINARY) => #"l"
+                   | (_, _, RT.BINARY) => raise Bug.Bug "tyToChar: BINARY"
+                   | (_, _, RT.DATA RT.LAYOUT_SINGLE) => #"v" (* is this ok? *)
+                   | (_, _, RT.DATA _) => rtyToChar (rty # {rep = RT.BINARY}))
+                | rtyToChar _ = raise Bug.Bug "rtyToChar: ANYTAG or ANYSIZE"
+              val spec = String.implode (tyToCharOpt (#retTy entryTy) :: map tyToChar (#argTyList entryTy))
+              val specId = DataLabel.generate []
+              val specLen = Word32.fromInt (size spec + 1)
+            in
+              (top1 @ [DEC (C.CTCALLBACKFUNCTION func), DATA (C.CTSTRING {id = specId, string = spec, loc = loc})],
+               VALUE,
+               C.CCEXPORTCALLBACK {codeExp = codeExp,
+                                   closureEnvExp = closureEnvExp,
+                                   instTyvars = tyvarKindEnv,
+                                   typeSpec = (specId, specLen),
+                                   resultTy = funPtrTy,
+                                   loc = loc})
+            end
         end
       | B.BCSTRING {string = L.STRING s, loc} =>
         let

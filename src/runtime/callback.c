@@ -6,8 +6,11 @@
  */
 
 #include "smlsharp.h"
+#include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <sys/mman.h>
+#include <ffi.h>
 #include "splay.h"
 
 static pthread_mutex_t callbacks_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -153,4 +156,77 @@ sml_alloc_code()
 
 	mutex_unlock(&callbacks_lock);
 	return p;
+}
+
+static ffi_type *
+char_to_type(char c)
+{
+	// Mimicks GHC's choice
+	switch (c) {
+	case 'v': return &ffi_type_void;
+	case 'f': return &ffi_type_float;
+	case 'd': return &ffi_type_double;
+	case 'L': return &ffi_type_sint64;
+	case 'l': return &ffi_type_uint64;
+	case 'W': return &ffi_type_sint32;
+	case 'w': return &ffi_type_uint32;
+	case 'S': return &ffi_type_sint16;
+	case 's': return &ffi_type_uint16;
+	case 'B': return &ffi_type_sint8;
+	case 'b': return &ffi_type_uint8;
+	case 'p': return &ffi_type_pointer;
+	default: abort();
+	}
+}
+
+SML_PRIMITIVE void *
+sml_create_callback(void *ml_func, void *env, int callconv, const char *types)
+{
+	void **ptrs = sml_find_callback((void *)ml_func, env);
+	// ptrs[0]: trampoline
+	if (ptrs[0] != NULL) {
+		return ptrs[0];
+	}
+	void *exec_ptr;
+	ffi_closure *closure = ffi_closure_alloc(sizeof(ffi_closure), &exec_ptr);
+	if (closure == NULL) {
+		sml_sysfatal("ffi_closure_alloc");
+	}
+	ffi_cif *cif = malloc(sizeof(ffi_cif));
+	if (cif == NULL) {
+		sml_sysfatal("malloc");
+	}
+
+	size_t nargs = strlen(types) - 1;
+	ffi_type *result_type = char_to_type(types[0]);
+	ffi_type **arg_types = malloc(sizeof(ffi_type *) * nargs);
+	if (arg_types == NULL) {
+		sml_sysfatal("malloc");
+	}
+	for (size_t i = 0; i < nargs; ++i) {
+		arg_types[i] = char_to_type(types[i + 1]);
+	}
+	ffi_abi abi;
+	switch (callconv) {
+	case 0: // default
+		abi = FFI_DEFAULT_ABI;
+		break;
+#if defined(__i386__)
+	case 1: // x86 stdcall
+		abi = FFI_STDCALL;
+		break;
+#endif
+	case 2: // fastcc
+		sml_sysfatal("fastcc not supported");
+	default:
+		sml_sysfatal("unsupported calling convention");
+	}
+	if (ffi_prep_cif(cif, abi, nargs, result_type, arg_types) != FFI_OK) {
+		sml_sysfatal("ffi_prep_cif");
+	}
+	if (ffi_prep_closure_loc(closure, cif, (void (*)(ffi_cif *, void *, void **, void *))ml_func, env, exec_ptr) != FFI_OK) {
+		sml_sysfatal("ffi_prep_closure_loc");
+	}
+	ptrs[0] = exec_ptr;
+	return exec_ptr;
 }

@@ -443,12 +443,13 @@ struct
           o compileExp (mask (subst, optionToList resultVar)) nextExp
         end
       | A.ANEXPORTCALLBACK {resultVar, codeExp, closureEnvExp, instTyvars,
-                            nextExp, loc} =>
+                            typeSpec, nextExp, loc} =>
         mid (M.MCEXPORTCALLBACK
                {resultVar = resultVar,
                 codeExp = compileValue subst codeExp,
                 closureEnvExp = compileValue subst closureEnvExp,
                 instTyvars = instTyvars,
+                typeSpec = typeSpec,
                 loc = loc})
         o compileExp (mask (subst, [resultVar])) nextExp
       | A.ANEXVAR {resultVar, id, nextExp, loc} =>

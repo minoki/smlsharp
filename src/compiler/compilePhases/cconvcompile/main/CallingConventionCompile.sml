@@ -693,12 +693,13 @@ print "\n==\n"
            attributes = attributes,
            resultTy = Option.map (compileTy btvEnv) resultTy,
            loc = loc}
-      | C.CCEXPORTCALLBACK {codeExp, closureEnvExp, instTyvars, resultTy,
-                            loc} =>
+      | C.CCEXPORTCALLBACK {codeExp, closureEnvExp, instTyvars, typeSpec,
+                            resultTy, loc} =>
         N.NCEXPORTCALLBACK
           {codeExp = compileExp env codeExp,
            closureEnvExp = compileExp env closureEnvExp,
            instTyvars = instTyvars,
+           typeSpec = typeSpec,
            resultTy = compileTy btvEnv resultTy,
            loc = loc}
       | C.CCCONST {const, ty, loc} =>

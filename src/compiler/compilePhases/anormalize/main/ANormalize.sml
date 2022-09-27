@@ -199,8 +199,8 @@ struct
         in
           (proc1 o proc2 o proc3, ret)
         end
-      | N.NCEXPORTCALLBACK {codeExp, closureEnvExp, instTyvars, resultTy,
-                            loc} =>
+      | N.NCEXPORTCALLBACK {codeExp, closureEnvExp, instTyvars, typeSpec,
+                            resultTy, loc} =>
         let
           val (proc1, codeExp) = compileExp env NONTAIL codeExp
           val (proc2, closureEnvExp) = compileExp env NONTAIL closureEnvExp
@@ -211,6 +211,7 @@ struct
                                            codeExp = codeExp,
                                            closureEnvExp = closureEnvExp,
                                            instTyvars = instTyvars,
+                                           typeSpec = typeSpec,
                                            nextExp = K,
                                            loc = loc},
                     resultTy, loc)

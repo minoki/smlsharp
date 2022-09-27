@@ -692,7 +692,7 @@ struct
           checkExp (bindVarOption (env, resultVar)) nextExp
         end
       | A.ANEXPORTCALLBACK {resultVar, instTyvars, codeExp, closureEnvExp,
-                            nextExp, loc} =>
+                            typeSpec, nextExp, loc} =>
         let
           val codeTy = checkValue env codeExp
           val closureEnvTy = checkValue env closureEnvExp

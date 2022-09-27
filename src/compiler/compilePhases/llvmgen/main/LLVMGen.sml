@@ -561,6 +561,15 @@ print
          retTy = L.PTR L.I8,
          retAttrs = [L.NOALIAS],
          fnAttrs = [L.NOUNWIND]}
+  val sml_create_callback =
+      R {name = "sml_create_callback",
+         tail = NONE,
+         argTys = [L.PTR L.I8, L.PTR L.I8, L.I32, L.PTR L.I8],
+         argAttrs = [nil, nil, nil, nil],
+         varArg = false,
+         retTy = L.PTR L.I8,
+         retAttrs = [],
+         fnAttrs = [L.NOUNWIND]}
   val sml_alloc =
       R {name = "sml_alloc",
          tail = NONE,
@@ -1725,7 +1734,34 @@ print
           o (case enterInsnOpt of NONE => empty | SOME x => x)
         end
       | M.MCEXPORTCALLBACK {resultVar, codeExp, closureEnvExp, instTyvars,
-                            loc} =>
+                            typeSpec = (typeSpecLabel, typeSpecArrLen), loc} =>
+        let
+          val code = compileValue env codeExp
+          val closureEnv = compileValue env closureEnvExp
+          val funPtr = VarID.generate ()
+          val trampPtr = VarID.generate ()
+          val callconv = 0w0 : Word64.word (* TODO *)
+          val resultTy = compileTy (#ty resultVar)
+          val typeSpec = dataLabelToSymbol typeSpecLabel
+          val typeSpecArrTy = L.ARRAY (typeSpecArrLen, L.I8)
+          val (typeSpecStructTy, typeSpecArrIndex) =
+              let val i = dataLabelOffset - objHeaderSize
+              in if i = 0w0 then (L.STRUCT ([L.I32, typeSpecArrTy], {packed=true}), 0w1)
+                 else (L.STRUCT ([L.ARRAY (i, L.I8), L.I32, typeSpecArrTy], {packed=true}), 0w2)
+              end
+          val typeSpecConst = L.CONST_GETELEMENTPTR {inbounds = true,
+                                                     ty = typeSpecStructTy,
+                                                     ptr = (L.PTR typeSpecStructTy, L.SYMBOL typeSpec),
+                                                     indices = [(L.I32, L.INTCONST 0w0), (L.I32, L.INTCONST typeSpecArrIndex), (L.I32, L.INTCONST 0w0)]}
+        in
+          insn1 (L.CONV (funPtr, L.BITCAST, (L.PTR (L.FN (L.VOID, [L.PTR L.I8, L.PTR L.I8, L.PTR (L.PTR L.I8), L.PTR L.I8], false)), #2 code), L.PTR L.I8))
+          o callIntrinsic (SOME trampPtr) sml_create_callback
+                          [(L.PTR L.I8, L.VAR funPtr), closureEnv, (L.I32, L.CONST (L.INTCONST callconv)), (L.PTR L.I8, L.CONST typeSpecConst)]
+          o insn1 (L.CONV (#id resultVar, L.BITCAST,
+                           (L.PTR L.I8, L.VAR trampPtr),
+                           resultTy))
+        end
+      (*
         let
           val code = compileValue env codeExp
           val closureEnv = compileValue env closureEnvExp
@@ -1780,6 +1816,7 @@ print
                            (L.PTR L.I8, L.VAR resultVar2),
                            compileTy (#ty resultVar)))
         end
+      *)
       | M.MCEXVAR {resultVar, id, loc} =>
         let
           val ty = compileTy (#ty resultVar)
@@ -2347,6 +2384,105 @@ print
       | M.MTCALLBACKFUNCTION {id, tyvarKindEnv, argVarList, closureEnvVar,
                               frameSlots, bodyExp, attributes, retTy,
                               cleanupHandler, loc} =>
+        (case closureEnvVar of
+           NONE =>
+           let
+             val args = map (fn {id,ty} => (compileTy ty, nil, id)) argVarList
+             val cconv = compileCallConv (#callingConvention attributes)
+             val (allocInsns, bodyInsns, retTy, personality) =
+                 compileTop env {frameSlots = frameSlots,
+                                 bodyExp = bodyExp,
+                                 cleanupHandler = cleanupHandler,
+                                 retTy = retTy,
+                                 argTys = map (fn (x,y,z) => (x,y)) args,
+                                 varArg = false,
+                                 cconv = cconv}
+           in
+             [L.DEFINE
+                {linkage = SOME L.INTERNAL,
+                 cconv = cconv,
+                 retAttrs = nil,
+                 retTy = retTy,
+                 name = callbackEntryLabelToSymbol id,
+                 parameters = args,
+                 fnAttrs = [L.UWTABLE],
+                 personality = personality,
+                 gcname = gcname,
+                 body = (allocInsns o bodyInsns) ()}]
+           end
+         | SOME {id = closureEnvId, ty = closureEnvTy} =>
+           let
+             val cif = VarID.generate ()
+             val resultPtr = VarID.generate ()
+             val argsPtr = VarID.generate ()
+             val context = VarID.generate ()
+             val ffi_args = [(L.PTR L.I8, nil, cif),
+                             (L.PTR L.I8, nil, resultPtr),
+                             (L.PTR (L.PTR L.I8), nil, argsPtr),
+                             (L.PTR L.I8, nil, context)]
+             val (_, args, setupArgs) =
+                 foldr (fn ({id,ty}, (i, args, insns')) =>
+                           let
+                             val ty = compileTy ty
+                             val tmp1 = VarID.generate ()
+                             val tmp2 = VarID.generate ()
+                             val tmp3 = VarID.generate ()
+                             val i = i - 0w1
+                           in (i,
+                               (ty, nil) :: args,
+                               insns [L.GETELEMENTPTR {result = tmp1,
+                                                       inbounds = true,
+                                                       ty = L.PTR L.I8,
+                                                       ptr = (L.PTR (L.PTR L.I8), L.VAR argsPtr),
+                                                       indices = [(L.I32, L.CONST (L.INTCONST i))]},
+                                      L.CONV (tmp2, L.BITCAST, (L.PTR (L.PTR L.I8), L.VAR tmp1), L.PTR (L.PTR ty)),
+                                      L.LOAD (tmp3, L.PTR ty, (L.PTR (L.PTR ty), L.VAR tmp2)),
+                                      L.LOAD (id, ty, (L.PTR ty, L.VAR tmp3))] o insns')
+                           end
+                       ) (Word64.fromInt (length argVarList), [], empty) argVarList
+             val insns1 = let
+                            val closureEnvTy = compileTy closureEnvTy
+                            val tmp = VarID.generate ()
+                          in insns [L.CONV (tmp, L.BITCAST, (L.PTR L.I8, L.VAR context), L.PTR closureEnvTy),
+                                    L.LOAD (closureEnvId, closureEnvTy, (L.PTR closureEnvTy, L.VAR tmp))]
+                          end
+             val (allocInsns, bodyInsns, retTy, personality) =
+                 compileTop env {frameSlots = frameSlots,
+                                 bodyExp = bodyExp,
+                                 cleanupHandler = cleanupHandler,
+                                 retTy = retTy,
+                                 argTys = args,
+                                 varArg = false,
+                                 cconv = SOME L.CCC}
+             fun fixupBody (insns, L.BLOCK {label, phis, body, next}) = (insns, L.BLOCK {label = label, phis = phis, body = fixupBody body, next = fixupBody next})
+               | fixupBody (insns, L.LANDINGPAD {label, argVar, catch, cleanup, body, next}) = (insns, L.LANDINGPAD {label = label, argVar = argVar, catch = catch, cleanup = cleanup, body = fixupBody body, next = fixupBody next})
+               | fixupBody (insns, L.RET operand) = let val tmp = VarID.generate ()
+                                                    in (insns @ [L.CONV (tmp, L.BITCAST, (L.PTR L.I8, L.VAR resultPtr), L.PTR (#1 operand)),
+                                                                 L.STORE {value = operand, dst = (L.PTR (#1 operand), L.VAR tmp)}], L.RET_VOID)
+                                                    end
+               | fixupBody (body as (_, L.RET_VOID)) = body
+               | fixupBody (body as (_, L.BR _)) = body
+               | fixupBody (body as (_, L.BR_C _)) = body
+               | fixupBody (body as (_, L.INVOKE _)) = body
+               | fixupBody (body as (_, L.RESUME _)) = body
+               | fixupBody (body as (_, L.SWITCH _)) = body
+               | fixupBody (body as (_, L.UNREACHABLE)) = body
+             val bodyInsns = fn () => fixupBody (bodyInsns ())
+           in
+             [L.DEFINE
+                {linkage = SOME L.INTERNAL,
+              cconv = SOME L.CCC,
+              retAttrs = nil,
+              retTy = L.VOID,
+              name = callbackEntryLabelToSymbol id,
+              parameters = ffi_args,
+              fnAttrs = [L.UWTABLE],
+              personality = personality,
+              gcname = gcname,
+              body = (allocInsns o insns1 o setupArgs o bodyInsns) ()}]
+           end
+        )
+        (*
         let
           val args = map (fn {id,ty} => (compileTy ty, nil, id)) argVarList
           val (insns1, args) =
@@ -2382,6 +2518,7 @@ print
               gcname = gcname,
               body = (allocInsns o insns1 o bodyInsns) ()}]
         end
+        *)
 
   fun makeRootArray toplevelName nil = (nil, (L.PTR L.I8, L.NULL))
     | makeRootArray toplevelName roots =

@@ -476,7 +476,7 @@ struct
                 orig = mid}
         end
       | M.MCEXPORTCALLBACK {resultVar, codeExp, closureEnvExp, instTyvars,
-                            loc} =>
+                            typeSpec, loc} =>
         MID {def = Set.singleton resultVar,
              use = useValues [codeExp, closureEnvExp],
              orig = mid,

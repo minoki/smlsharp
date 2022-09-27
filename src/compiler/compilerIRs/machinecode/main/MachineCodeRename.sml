@@ -187,7 +187,7 @@ struct
            subst)
         end
       | M.MCEXPORTCALLBACK {resultVar, codeExp, closureEnvExp, instTyvars,
-                            loc} =>
+                            typeSpec, loc} =>
         let
           val codeExp = renameValue subst codeExp
           val clsoureEnvExp = renameValue subst closureEnvExp
@@ -196,6 +196,7 @@ struct
           (M.MCEXPORTCALLBACK {codeExp = codeExp,
                                closureEnvExp = closureEnvExp,
                                instTyvars = instTyvars,
+                               typeSpec = typeSpec,
                                resultVar = resultVar,
                                loc = loc},
            subst)
