@@ -22,8 +22,13 @@ ifeq ($(ARCH),x86)
 TRIPLE = i686-apple-darwin
 else ifeq ($(ARCH),x86_64)
 TRIPLE = x86_64-apple-darwin
+else ifeq ($(ARCH),aarch64)
+TRIPLE = arm64-apple-darwin
+else ifeq ($(ARCH),arm64)
+override ARCH = aarch64
+TRIPLE = arm64-apple-darwin
 else ifdef ARCH
-$(error ARCH must be either x86 or x86_64)
+$(error ARCH must be either x86, x86_64, or aarch64)
 endif
 
 MINISOURCES = \

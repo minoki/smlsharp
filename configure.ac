@@ -280,6 +280,9 @@ if test "x$build" = "x$target"; then
     x86_64|amd64)
       PRECOMPILED_ARCH=x86_64
       ;;
+    aarch64|arm64)
+      PRECOMPILED_ARCH=aarch64
+      ;;
     *)
       AC_MSG_ERROR([the compiler is not precompiled for target_cpu $target_cpu.])
       ;;
